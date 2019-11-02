@@ -1,0 +1,14 @@
+{
+    "name": "TimeSync",
+    "keywords": "ntp",
+    "description": "",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/BlumAmir/TimeSync"
+    },
+    "version": "1.0",
+    "frameworks": "arduino",
+    "platforms": [
+        "espressif"
+    ]
+}
