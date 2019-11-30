@@ -12,6 +12,18 @@ public:
   void setup(const IPAddress &ntpServerAddress, uint8_t ntpServerPort);
   void loop();
 
+public:
+  bool IsTimeValid() { return m_isTimeValid; }
+  int64_t GetEspStartTimeMs() { return m_espStartTimeMs; }
+
+public:
+  void UpdateConfiguration(
+    unsigned int maxAllowedRoundTripMs,
+    unsigned int desirableUpdateFreqMs,
+    unsigned int minServerSendTimeMs,
+    unsigned int maxServerSendTimeMs
+  );
+
 private:
   void sendNTPpacket();
   void updateLimits(unsigned long currMillis);
@@ -26,6 +38,12 @@ private:
 
 public:
 
+  // top limit for allowed round trip time in worst case
+  // the library will not use a value if the round trip time is larger than
+  // this number of ms
+  static const unsigned int defaultMaxAllowedRoundTripMs = 15;
+  unsigned int m_maxAllowedRoundTripMs = defaultMaxAllowedRoundTripMs;
+
   // this is a heuristic time for tuning the update algorithm.
   // user should configure the time frequency in ms, in which clock updates
   // are desired to take place.
@@ -35,20 +53,18 @@ public:
   // there is no practial way for the library to ensure that time will update
   // at this frequency (or any other frequency). this value is just for
   // best effort
-  unsigned int m_desirableUpdateFreqMs = 1000 * 60 * 10; // 10 minutes
+  static const unsigned int defaultDesirableUpdateFreqMs = 1000 * 60 * 10; // 10 minutes
+  unsigned int m_desirableUpdateFreqMs = defaultDesirableUpdateFreqMs;
 
   // bottom limit for ntp packet send to server.
   // the library will not send packets at rate higher than that
-  unsigned int m_minServerSendTimeMs = 500; // half a second
+  static const unsigned int defaultMinServerSendTimeMs = 500; // half a second
+  unsigned int m_minServerSendTimeMs = defaultMinServerSendTimeMs; 
 
   // top limit for ntp packet send to server.
   // the library will not wait more than this time for an update packet to server
-  unsigned int m_maxServerSendTimeMs = 1000 * 60 * 2; // two minutes
-
-  // top limit for allowed round trip time in worst case
-  // the library will not use a value if the round trip time is larger than
-  // this number of ms
-  unsigned int m_maxAllowedRoundTripMs = 15;
+  static const unsigned int defaultMaxServerSendTimeMs = 1000 * 60 * 2; // two minutes
+  unsigned int m_maxServerSendTimeMs = defaultMaxServerSendTimeMs;
 
 // timesync algorithm
 private:
@@ -64,10 +80,8 @@ private:
   uint32_t m_lastClockUpdateTime = 0;
   uint32_t m_lastRoundTripTimeMs = 0;
 
-public:
+private:
   bool m_isTimeValid = false;
-  unsigned long m_startTimeSec = 0;
-  unsigned long m_startTimeMillis = 0;
   // espStartTime is the ms since epoch of the time that esp started (millis() function return 0)
   // so if you have the current esp millis() value, you can add it to this value to get current ms since ephoc
   int64_t m_espStartTimeMs = 0;

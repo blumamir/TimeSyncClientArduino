@@ -14,11 +14,6 @@ TimeSync::TimeSync() {
   m_packetBuffer[13]  = 0x4E;
   m_packetBuffer[14]  = 49;
   m_packetBuffer[15]  = 52;
-
-  // when library starts, time is not known yet, so we need to fetch it ASAP
-  m_timeBetweenSendsMs = m_minServerSendTimeMs;
-  // and we want any value we can get just to start, we will improve it later
-  m_limitRoundtripForUpdate = m_maxAllowedRoundTripMs;
 }
 
 void TimeSync::sendNTPpacket() {
@@ -38,6 +33,12 @@ void TimeSync::updateLimits(unsigned long currMillis) {
   // don't update the limits if we didn't have any updates.
   // we cannot read valid value from m_lastClockUpdateTime in that case
   if(!m_isTimeValid) {
+
+    // when library starts, time is not known yet, so we need to fetch it ASAP
+    m_timeBetweenSendsMs = m_minServerSendTimeMs;
+    // and we want any value we can get just to start, we will improve it later
+    m_limitRoundtripForUpdate = m_maxAllowedRoundTripMs;
+
     return;
   }
 
@@ -150,18 +151,19 @@ void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
 
   unsigned long recvTimeSec = recvTime / 1000;
   unsigned long recvTimeMillis = recvTime % 1000;
-  m_startTimeSec = secFromEpoch - recvTimeSec;
+  unsigned long startTimeSec = secFromEpoch - recvTimeSec;
+  unsigned long startTimeMillis;
   if (((int32_t)msPart - (int32_t)recvTimeMillis) < 0) {
-    m_startTimeMillis = 1000 - (recvTimeMillis - msPart);
-    m_startTimeSec--;
+    startTimeMillis = 1000 - (recvTimeMillis - msPart);
+    startTimeSec--;
   }
   else {
-    m_startTimeMillis = msPart - recvTimeMillis;
+    startTimeMillis = msPart - recvTimeMillis;
   }
   m_lastClockUpdateTime = recvTime;
   m_lastRoundTripTimeMs = roundTrip;
   m_isTimeValid = true;
-  m_espStartTimeMs = (uint64_t)(((uint64_t)m_startTimeSec)*1000 + (uint64_t)m_startTimeMillis);
+  m_espStartTimeMs = (uint64_t)(((uint64_t)startTimeSec)*1000 + (uint64_t)startTimeMillis);
 
   updateLimits(m_lastClockUpdateTime);
 }
@@ -176,6 +178,8 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint8_t ntpServerPort) {
     AuPacketHandlerFunction callback = std::bind(&TimeSync::onNtpPacketCallback, this, std::placeholders::_1);
     m_udp.onPacket(callback);
   }
+
+  updateLimits(0);
 }
 
 void TimeSync::loop() {
@@ -185,3 +189,17 @@ void TimeSync::loop() {
     updateLimits(currMillis);
   }
 }
+
+void TimeSync::UpdateConfiguration(
+    unsigned int maxAllowedRoundTripMs,
+    unsigned int desirableUpdateFreqMs,
+    unsigned int minServerSendTimeMs,
+    unsigned int maxServerSendTimeMs
+  )
+{
+  m_maxAllowedRoundTripMs = maxAllowedRoundTripMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;
+  m_desirableUpdateFreqMs = desirableUpdateFreqMs > 0 ? desirableUpdateFreqMs : defaultDesirableUpdateFreqMs;
+  m_minServerSendTimeMs = minServerSendTimeMs > 0 ? minServerSendTimeMs : defaultMinServerSendTimeMs;
+  m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxAllowedRoundTripMs : defaultMaxAllowedRoundTripMs;  
+}
+

@@ -40,8 +40,8 @@ void setup()
 
     IPAddress ntpServerIp;
     ntpServerIp.fromString(ntpServerIpStr);
+    timesync.UpdateConfiguration(50, 1000 * 60 * 10, 100, 1000 * 60 * 2);
     timesync.setup(ntpServerIp, 123);
-    timesync.m_maxAllowedRoundTripMs = 50;
 }
 
 void loop()
