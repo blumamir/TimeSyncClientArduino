@@ -48,10 +48,10 @@ void loop()
 {
     timesync.loop();
     Serial.print("time is valid: ");
-    if(timesync.m_isTimeValid)
+    if(timesync.IsTimeValid())
     {
         Serial.print("yes. esp started when the ntp time showed: ");
-        print_uint64_t(timesync.m_espStartTimeMs);
+        print_uint64_t(timesync.GetEspStartTimeMs());
         Serial.println("");
     }
     else
