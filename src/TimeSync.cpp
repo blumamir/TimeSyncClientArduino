@@ -25,7 +25,9 @@ void TimeSync::sendNTPpacket() {
   // we can send a packet requesting a timestamp:
   m_udp.writeTo(m_packetBuffer, NTP_PACKET_SIZE, m_address, m_ntpServerPort);
 
-  //Serial.println("sendingPacket");
+  #ifdef TIME_SYNC_DEBUG
+  Serial.println("sending ntp packet to ntp server");
+  #endif // TIME_SYNC_DEBUG
 }
 
 void TimeSync::updateLimits(unsigned long currMillis) {
@@ -109,11 +111,15 @@ void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
   m_lastNtpPacketConsumed = false;
   if(roundTrip >= m_limitRoundtripForUpdate) {
     // this packet took too much time for round trip. we don't use it
-    //Serial.print("===> round trip is "); Serial.print(roundTrip); Serial.println(" ms, not updating internal time");
+    #ifdef TIME_SYNC_DEBUG
+    Serial.print("===> round trip is "); Serial.print(roundTrip); Serial.println(" ms, not updating internal time");
+    #endif // TIME_SYNC_DEBUG
     return;
   }
 
+  #ifdef TIME_SYNC_DEBUG
   Serial.print("===> round trip is "); Serial.print(roundTrip); Serial.println(" ms, updating internal time");
+  #endif // TIME_SYNC_DEBUG
 
   // parse ntp response buffer
   uint8_t *packetBuffer = packet.data();
