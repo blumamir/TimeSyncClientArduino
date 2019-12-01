@@ -5,9 +5,9 @@
 TimeSync timesync;
 
 // replace the * with the values in your setup
-const char *ssid = "****";
-const char *password =  "****";
-const char *ntpServerIpStr = "*.*.*.*";
+// const char *ssid = "****";
+// const char *password =  "****";
+// const char *ntpServerIpStr = "*.*.*.*";
 
 void print_uint64_t(uint64_t num) {
 
@@ -33,30 +33,37 @@ void setup()
 
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
-        Serial.println("Connecting to WiFi..");
+        Serial.print("Connecting to WiFi "); Serial.print(ssid); Serial.println("..");
     }
 
     Serial.println("Connected to the WiFi network");
 
     IPAddress ntpServerIp;
     ntpServerIp.fromString(ntpServerIpStr);
-    timesync.UpdateConfiguration(50, 1000 * 60 * 10, 100, 1000 * 60 * 2);
-    timesync.setup(ntpServerIp, 123);
+    timesync.UpdateConfiguration(1, 1000 * 60 * 10, 1000, 1000 * 60 * 2);
+    timesync.setup(ntpServerIp, 12321);
 }
+
+unsigned int lastPrintTime = 0;
 
 void loop()
 {
     timesync.loop();
-    Serial.print("time is valid: ");
-    if(timesync.IsTimeValid())
+    if(millis() - lastPrintTime > 5000)
     {
-        Serial.print("yes. esp started when the ntp time showed: ");
-        print_uint64_t(timesync.GetEspStartTimeMs());
-        Serial.println("");
+        lastPrintTime = millis();
+        Serial.print(millis());
+        Serial.print(": time is valid: ");
+        if(timesync.IsTimeValid())
+        {
+            Serial.print("yes. esp started when the ntp time showed: ");
+            print_uint64_t(timesync.GetEspStartTimeMs());
+            Serial.println("");
+        }
+        else
+        {
+            Serial.println("no");
+        }
     }
-    else
-    {
-        Serial.println("no");
-    }
-    delay(50); // simulate some other work done in the loop
+    delay(10); // simulate some other work done in the loop
 }

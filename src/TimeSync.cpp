@@ -1,32 +1,47 @@
 #include "TimeSync.hpp"
 #include "Arduino.h" // for millis() function
 
+#ifdef TIME_SYNC_DEBUG
+void print_uint64(uint64_t num) {
+
+  char rev[128]; 
+  char *p = rev+1;
+
+  while (num > 0) {
+    *p++ = '0' + ( num % 10);
+    num/= 10;
+  }
+  p--;
+  /*Print the number which is now in reverse*/
+  while (p > rev) {
+    Serial.print(*p--);
+  }
+}
+#endif // TIME_SYNC_DEBUG
+
 TimeSync::TimeSync() {
   // set all bytes in the buffer to 0
-  memset(m_packetBuffer, 0, NTP_PACKET_SIZE);
+  memset(m_requestTimeMsgBuffer, 0, REQUEST_TIME_PACKET_SIZE);
   // Initialize values needed to form NTP request
-  m_packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  m_packetBuffer[1] = 0;     // Stratum, or type of clock
-  m_packetBuffer[2] = 6;     // Polling Interval
-  m_packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  m_packetBuffer[12]  = 49;
-  m_packetBuffer[13]  = 0x4E;
-  m_packetBuffer[14]  = 49;
-  m_packetBuffer[15]  = 52;
+  m_requestTimeMsgBuffer[0] = 'T';
+  m_requestTimeMsgBuffer[1] = 'S'; 
+  m_requestTimeMsgBuffer[2] = 'P'; 
+  m_requestTimeMsgBuffer[3] = 1; // Protocol Version
 }
 
-void TimeSync::sendNTPpacket() {
+void TimeSync::sendTspPacket() {
 
-  m_lastNtpSendTime = millis();
-  m_lastNtpPacketConsumed = true;
+  // stamp the send time
+  m_lastTspSendTime = millis();
 
-  // all NTP fields have been given values, now
-  // we can send a packet requesting a timestamp:
-  m_udp.writeTo(m_packetBuffer, NTP_PACKET_SIZE, m_address, m_ntpServerPort);
+  // generate request cookie which is the esp millis() value
+  m_lastTspReqCookie = m_lastTspSendTime;
+  *((uint64_t *)(m_requestTimeMsgBuffer + 8)) = m_lastTspReqCookie;
+
+  m_udp.writeTo(m_requestTimeMsgBuffer, REQUEST_TIME_PACKET_SIZE, m_address, m_tspServerPort);
 
   #ifdef TIME_SYNC_DEBUG
-  Serial.println("sending ntp packet to ntp server");
+  Serial.println("sending time sync request packet to server");
   #endif // TIME_SYNC_DEBUG
 }
 
@@ -97,89 +112,106 @@ void TimeSync::updateLimits(unsigned long currMillis) {
 
 void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
 {
-  // this might be a retransmission of a packet we already received,
-  // or some other network issue which we cannot handle
-  if(!m_lastNtpPacketConsumed) {
+  // stamp the recv time, this is important to be done ASAP
+  uint32_t espTimeReplyStamp = millis();
+
+  if(packet.length() != 24)
+  {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(packet.length());
+    #endif // TIME_SYNC_DEBUG
+
     return;
   }
 
-  // stamp the recv time, this is important to be done ASAP
-  uint32_t recvTime = millis();
+  uint8_t *packetResponseBuffer = packet.data();
+  uint64_t responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
+  if(responseCookie != m_lastTspReqCookie) {
+    // this is a reponse for some old request, or not an tsp packet
+
+    #ifdef TIME_SYNC_DEBUG
+    Serial.print("TimeSync: ignoring tsp response. expected cookie: "); print_uint64(m_lastTspReqCookie); Serial.print(" and got "); print_uint64(responseCookie); Serial.println("");
+    #endif // TIME_SYNC_DEBUG
+
+    return;
+  }
+  m_lastTspReqCookie = 0; // mark 0 means we consumed the response
 
   // check if time update is needed
-  unsigned int roundTrip = recvTime - m_lastNtpSendTime;
-  m_lastNtpPacketConsumed = false;
+  unsigned int roundTrip = espTimeReplyStamp - m_lastTspSendTime;
   if(roundTrip >= m_limitRoundtripForUpdate) {
     // this packet took too much time for round trip. we don't use it
+
     #ifdef TIME_SYNC_DEBUG
-    Serial.print("===> round trip is "); Serial.print(roundTrip); Serial.println(" ms, not updating internal time");
+  Serial.print("TimeSync: round trip is "); Serial.print(roundTrip); Serial.print(" >= "); Serial.print(m_limitRoundtripForUpdate); Serial.println(" ms, NOT updating internal time");
     #endif // TIME_SYNC_DEBUG
+
     return;
   }
 
   #ifdef TIME_SYNC_DEBUG
-  Serial.print("===> round trip is "); Serial.print(roundTrip); Serial.println(" ms, updating internal time");
+  Serial.print("TimeSync: round trip is "); Serial.print(roundTrip); Serial.print(" < "); Serial.print(m_limitRoundtripForUpdate); Serial.println(" ms, updating internal time");
   #endif // TIME_SYNC_DEBUG
 
-  // parse ntp response buffer
-  uint8_t *packetBuffer = packet.data();
+  uint64_t serverTimeMsSinceEpoch = *((uint64_t *)(packetResponseBuffer + 16));
+  unsigned int espTimeWhenServerStampped = espTimeReplyStamp - (roundTrip / 2); // approximation, since we cannot really know this value
 
-  // seconds part
-  uint32_t highWord = word(packetBuffer[40], packetBuffer[41]);
-  uint32_t lowWord = word(packetBuffer[42], packetBuffer[43]);
-  uint32_t secFromNtpEpoch = highWord << 16 | lowWord;
-  // ms part
-  uint32_t otherHighWord = word(packetBuffer[44], packetBuffer[45]);
-  uint32_t otherLowWord = word(packetBuffer[46], packetBuffer[47]);
-  uint32_t fractional = otherHighWord << 16 | otherLowWord;
-  float readMsF = ((float)fractional)*2.3283064365387E-07; // fractional*(1000/2^32) to get milliseconds.
-  if(readMsF < 0.0) {
-    // should not happen, but we will check just in case
-    readMsF = 0.0;
-  }
-  // this is just the fractional part. should be in range [0, 1000)
-  uint32_t msPart = (uint32_t)(readMsF);
-  if(msPart >= 1000) {
-    // this can happen in very rare scenarions, because float calculations are
-    // not precise and can inject errors
-    msPart = 999;
-  }
+  // // seconds part
+  // uint32_t highWord = word(packetBuffer[40], packetBuffer[41]);
+  // uint32_t lowWord = word(packetBuffer[42], packetBuffer[43]);
+  // uint32_t secFromNtpEpoch = highWord << 16 | lowWord;
+  // // ms part
+  // uint32_t otherHighWord = word(packetBuffer[44], packetBuffer[45]);
+  // uint32_t otherLowWord = word(packetBuffer[46], packetBuffer[47]);
+  // uint32_t fractional = otherHighWord << 16 | otherLowWord;
+  // float readMsF = ((float)fractional)*2.3283064365387E-07; // fractional*(1000/2^32) to get milliseconds.
+  // if(readMsF < 0.0) {
+  //   // should not happen, but we will check just in case
+  //   readMsF = 0.0;
+  // }
+  // // this is just the fractional part. should be in range [0, 1000)
+  // uint32_t msPart = (uint32_t)(readMsF);
+  // if(msPart >= 1000) {
+  //   // this can happen in very rare scenarions, because float calculations are
+  //   // not precise and can inject errors
+  //   msPart = 999;
+  // }
 
-  // Unix time starts on Jan 1 1970. ntp epoch is Jan 1 1900,
-  // In seconds, that's 2208988800:
-  static const unsigned long seventyYears = 2208988800UL;
-  uint32_t secFromEpoch = secFromNtpEpoch - seventyYears;
+  // // Unix time starts on Jan 1 1970. ntp epoch is Jan 1 1900,
+  // // In seconds, that's 2208988800:
+  // static const unsigned long seventyYears = 2208988800UL;
+  // uint32_t secFromEpoch = secFromNtpEpoch - seventyYears;
 
-  // esp epoch is the time when esp started. it is the time for which millis()
-  // function returned 0.
-  // now we will calculate what was the time (seconds + ms) on esp epoch.
-  // that is done by reducing 'recvTime' from the time sent from ntp server.
+  // // esp epoch is the time when esp started. it is the time for which millis()
+  // // function returned 0.
+  // // now we will calculate what was the time (seconds + ms) on esp epoch.
+  // // that is done by reducing 'recvTime' from the time sent from ntp server.
 
-  unsigned long recvTimeSec = recvTime / 1000;
-  unsigned long recvTimeMillis = recvTime % 1000;
-  unsigned long startTimeSec = secFromEpoch - recvTimeSec;
-  unsigned long startTimeMillis;
-  if (((int32_t)msPart - (int32_t)recvTimeMillis) < 0) {
-    startTimeMillis = 1000 - (recvTimeMillis - msPart);
-    startTimeSec--;
-  }
-  else {
-    startTimeMillis = msPart - recvTimeMillis;
-  }
-  m_lastClockUpdateTime = recvTime;
+  // unsigned long recvTimeSec = recvTime / 1000;
+  // unsigned long recvTimeMillis = recvTime % 1000;
+  // unsigned long startTimeSec = secFromEpoch - recvTimeSec;
+  // unsigned long startTimeMillis;
+  // if (((int32_t)msPart - (int32_t)recvTimeMillis) < 0) {
+  //   startTimeMillis = 1000 - (recvTimeMillis - msPart);
+  //   startTimeSec--;
+  // }
+  // else {
+  //   startTimeMillis = msPart - recvTimeMillis;
+  // }
+  m_lastClockUpdateTime = espTimeReplyStamp;
   m_lastRoundTripTimeMs = roundTrip;
   m_isTimeValid = true;
-  m_espStartTimeMs = (uint64_t)(((uint64_t)startTimeSec)*1000 + (uint64_t)startTimeMillis);
+  m_espStartTimeMs = serverTimeMsSinceEpoch - espTimeWhenServerStampped;
 
   updateLimits(m_lastClockUpdateTime);
 }
 
-void TimeSync::setup(const IPAddress &ntpServerAddress, uint8_t ntpServerPort) {
+void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) {
 
   m_address = ntpServerAddress;
-  m_ntpServerPort = ntpServerPort;
+  m_tspServerPort = tspServerPort;
 
-  if(m_udp.connect(m_address, m_ntpServerPort)) {
+  if(m_udp.connect(m_address, m_tspServerPort)) {
     Serial.println("UDP connected");
     AuPacketHandlerFunction callback = std::bind(&TimeSync::onNtpPacketCallback, this, std::placeholders::_1);
     m_udp.onPacket(callback);
@@ -190,8 +222,8 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint8_t ntpServerPort) {
 
 void TimeSync::loop() {
   unsigned long currMillis = millis();
-  if( (currMillis - m_lastNtpSendTime) > m_timeBetweenSendsMs) {
-    sendNTPpacket();
+  if( (currMillis - m_lastTspSendTime) > m_timeBetweenSendsMs) {
+    sendTspPacket();
     updateLimits(currMillis);
   }
 }
@@ -203,9 +235,9 @@ void TimeSync::UpdateConfiguration(
     unsigned int maxServerSendTimeMs
   )
 {
-  m_maxAllowedRoundTripMs = maxAllowedRoundTripMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;
+  m_maxAllowedRoundTripMs = maxAllowedRoundTripMs > 0 ? maxAllowedRoundTripMs : defaultMaxAllowedRoundTripMs;
   m_desirableUpdateFreqMs = desirableUpdateFreqMs > 0 ? desirableUpdateFreqMs : defaultDesirableUpdateFreqMs;
   m_minServerSendTimeMs = minServerSendTimeMs > 0 ? minServerSendTimeMs : defaultMinServerSendTimeMs;
-  m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxAllowedRoundTripMs : defaultMaxAllowedRoundTripMs;  
+  m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;  
 }
 

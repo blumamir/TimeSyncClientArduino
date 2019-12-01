@@ -9,7 +9,7 @@ public:
 
   TimeSync();
 
-  void setup(const IPAddress &ntpServerAddress, uint8_t ntpServerPort);
+  void setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort);
   void loop();
 
 public:
@@ -25,13 +25,13 @@ public:
   );
 
 private:
-  void sendNTPpacket();
+  void sendTspPacket();
   void updateLimits(unsigned long currMillis);
 
 // network config values
 private:
   IPAddress m_address;
-  uint8_t m_ntpServerPort;
+  uint16_t m_tspServerPort;
 
 private:
   void onNtpPacketCallback(AsyncUDPPacket &packet);
@@ -72,9 +72,9 @@ private:
   unsigned long m_limitRoundtripForUpdate = m_maxAllowedRoundTripMs;
   unsigned long m_timeBetweenSendsMs = m_minServerSendTimeMs;
 
-  // time at which we sent last ntp packet
-  uint32_t m_lastNtpSendTime = 0;
-  bool m_lastNtpPacketConsumed = false;
+  // millis at which we sent time request packet
+  uint32_t m_lastTspSendTime = 0;
+  uint64_t m_lastTspReqCookie = 0; // 0 is invalid, != 0 is valid cookie
 
   // time in esp millis() of when we last updated the clock from ntp server
   uint32_t m_lastClockUpdateTime = 0;
@@ -83,13 +83,13 @@ private:
 private:
   bool m_isTimeValid = false;
   // espStartTime is the ms since epoch of the time that esp started (millis() function return 0)
-  // so if you have the current esp millis() value, you can add it to this value to get current ms since ephoc
+  // so if you have the current esp millis() value, you can add it to this value to get current ms since epoch
   int64_t m_espStartTimeMs = 0;
 
 private:
 
-  static const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-  uint8_t m_packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+  static const int REQUEST_TIME_PACKET_SIZE = 16;
+  uint8_t m_requestTimeMsgBuffer[REQUEST_TIME_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
   AsyncUDP m_udp;
 };
