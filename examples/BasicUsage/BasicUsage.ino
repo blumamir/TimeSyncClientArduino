@@ -8,9 +8,6 @@ TimeSync timesync;
 // const char *ssid = "****";
 // const char *password =  "****";
 // const char *ntpServerIpStr = "*.*.*.*";
-const char *ssid = "Rav-Hen";
-const char *password =  "nimnimNIM";
-const char *ntpServerIpStr = "10.0.0.106";
 
 void print_uint64_t(uint64_t num) {
 
@@ -43,7 +40,7 @@ void setup()
 
     IPAddress ntpServerIp;
     ntpServerIp.fromString(ntpServerIpStr);
-    timesync.UpdateConfiguration(15, 1000 * 60 * 10, 100, 1000 * 60 * 2);
+    timesync.updateConfiguration(15, 1000 * 60 * 10, 250, 1000 * 60 * 2);
     timesync.setup(ntpServerIp, 12321);
 }
 
@@ -57,10 +54,10 @@ void loop()
         lastPrintTime = millis();
         Serial.print(millis());
         Serial.print(": time is valid: ");
-        if(timesync.IsTimeValid())
+        if(timesync.isTimeValid())
         {
-            Serial.print("yes. esp started when the ntp time showed: ");
-            print_uint64_t(timesync.GetEspStartTimeMs());
+            Serial.print("yes. esp started when the TimeSyncServer epoch time showed: ");
+            print_uint64_t(timesync.getEspStartTimeMs());
             Serial.println("");
         }
         else

@@ -43,11 +43,11 @@ public:
   void loop();
 
 public:
-  bool IsTimeValid() { return m_isTimeValid; }
-  int64_t GetEspStartTimeMs() { return m_espStartTimeMs; }
+  bool isTimeValid() { return m_isTimeValid; }
+  int64_t getEspStartTimeMs() { return m_espStartTimeMs; }
 
 public:
-  void UpdateConfiguration(
+  void updateConfiguration(
     unsigned int maxAllowedRoundTripMs,
     unsigned int desirableUpdateFreqMs,
     unsigned int minServerSendTimeMs,
@@ -58,11 +58,16 @@ private:
   void sendTspPacket();
   void updateLimits(unsigned long currMillis);
 
+private:
+  // NOTICE! this function is called from lwip callback, and should not access 
+  // class members without proper thought on synchronization
+  void handlePbufOnLwipContext(pbuf *pb);
+
 // lwip api static functions
 private:
   static err_t lwipSend(struct tcpip_api_call_data *data);
   static err_t lwipConnect(struct tcpip_api_call_data *data);
-
+  static void lwipUdpRecvCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port);
 
 // network config values
 private:
@@ -130,10 +135,6 @@ private:
 
   // internal header for the socket, used with lwip api
   udp_pcb *m_lwipPcb = NULL;
-
-public:
-  // this queue is used to move responses from the lwip context, to the TimeSync context
-  // it is public, but used only internally.
   xQueueHandle m_responsesQueue;
 };
 

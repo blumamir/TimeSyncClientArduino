@@ -141,61 +141,6 @@ void TimeSync::updateLimits(unsigned long currMillis) {
   //Serial.println("******************"); Serial.println();
 }
 
-void handleSingleResponsePbuf(TimeSync *senderTimeSync, pbuf *pb)
-{
-  if(pb->len < 24)
-  {
-    #ifdef TIME_SYNC_DEBUG
-    Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(pb->len);
-    #endif // TIME_SYNC_DEBUG
-
-    return;
-  }
-
-  uint8_t *packetResponseBuffer = (uint8_t *)pb->payload;
-
-  // validate that this packet is ineeded from the TSP protocol
-  if( *(packetResponseBuffer + 0) != 'T' ||
-      *(packetResponseBuffer + 1) != 'S' ||
-      *(packetResponseBuffer + 2) != 'P')
-  {
-    #ifdef TIME_SYNC_DEBUG
-    Serial.println("TimeSync: ignoring tsp response. TSP header not valid. probably wrong packet arrived to socket");
-    #endif // TIME_SYNC_DEBUG
-
-    return;
-  }
-
-  // prepare message for queue. 
-  // we copy everything we need from the udp buffer so we don't need it anymore
-  UdpTimeResponseData udpTimeResponseData;
-  udpTimeResponseData.espPacketRecvTime = millis(); 
-  udpTimeResponseData.responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
-  udpTimeResponseData.epochTimeFromServer = *((uint64_t *)(packetResponseBuffer + 16));
-
-  if (xQueueSend(senderTimeSync->m_responsesQueue, &udpTimeResponseData, 0) != pdTRUE) {
-    #ifdef TIME_SYNC_DEBUG
-    Serial.println("TimeSync: ignoring tsp response. cannot send it on queue ");
-    #endif // TIME_SYNC_DEBUG
-  }
-}
-
-void onTspResponseCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
-{
-  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
-
-  while(pb != NULL) {
-
-      pbuf * currPb = pb;
-      pb = pb->next;
-      currPb->next = NULL;
-
-      handleSingleResponsePbuf(senderTimeSync, currPb);
-
-      pbuf_free(currPb);
-  }
-}
-
 void TimeSync::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
 {
   if(udpTimeResponseData.responseCookie != m_lastTspReqCookie) {
@@ -253,7 +198,7 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   m_lwipPcb = udp_new();
 
   // tell lwip to call this function when a udp packet arrive on this socket (pcb)
-  udp_recv(m_lwipPcb, &onTspResponseCallback, (void *)this);
+  udp_recv(m_lwipPcb, &TimeSync::lwipUdpRecvCallback, (void *)this);
 
   ip_addr_t lwipIpv4Addr;
   lwipIpv4Addr.type = IPADDR_TYPE_V4;
@@ -295,7 +240,7 @@ void TimeSync::loop() {
   }
 }
 
-void TimeSync::UpdateConfiguration(
+void TimeSync::updateConfiguration(
     unsigned int maxAllowedRoundTripMs,
     unsigned int desirableUpdateFreqMs,
     unsigned int minServerSendTimeMs,
@@ -308,6 +253,46 @@ void TimeSync::UpdateConfiguration(
   m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;  
 }
 
+void TimeSync::handlePbufOnLwipContext(pbuf *pb)
+{
+  if(pb->len < 24)
+  {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(pb->len);
+    #endif // TIME_SYNC_DEBUG
+
+    return;
+  }
+
+  uint8_t *packetResponseBuffer = (uint8_t *)pb->payload;
+
+  // validate that this packet is ineeded from the TSP protocol
+  if( *(packetResponseBuffer + 0) != 'T' ||
+      *(packetResponseBuffer + 1) != 'S' ||
+      *(packetResponseBuffer + 2) != 'P')
+  {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("TimeSync: ignoring tsp response. TSP header not valid. probably wrong packet arrived to socket");
+    #endif // TIME_SYNC_DEBUG
+
+    return;
+  }
+
+  // prepare message for queue. 
+  // we copy everything we need from the udp buffer so we don't need it anymore
+  UdpTimeResponseData udpTimeResponseData;
+  udpTimeResponseData.espPacketRecvTime = millis(); 
+  udpTimeResponseData.responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
+  udpTimeResponseData.epochTimeFromServer = *((uint64_t *)(packetResponseBuffer + 16));
+
+  // it is OK to access m_responsesQueue from this context (no need for synchronization)
+  if (xQueueSend(m_responsesQueue, &udpTimeResponseData, 0) != pdTRUE) {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("TimeSync: ignoring tsp response. cannot send it on queue ");
+    #endif // TIME_SYNC_DEBUG
+  }
+}
+
 err_t TimeSync::lwipSend(struct tcpip_api_call_data *data){
     UdpSendData *msg = (UdpSendData *)data;
     msg->err = udp_send(msg->pcb, msg->pb);
@@ -318,4 +303,20 @@ err_t TimeSync::lwipConnect(struct tcpip_api_call_data *data){
     UdpConnectData *msg = (UdpConnectData *)data;
     msg->err = udp_connect(msg->pcb, msg->addr, msg->port);
     return msg->err;
+}
+
+void TimeSync::lwipUdpRecvCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
+{
+  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
+
+  while(pb != NULL) {
+
+      pbuf * currPb = pb;
+      pb = pb->next;
+      currPb->next = NULL;
+
+      senderTimeSync->handlePbufOnLwipContext(currPb);
+
+      pbuf_free(currPb);
+  }
 }
