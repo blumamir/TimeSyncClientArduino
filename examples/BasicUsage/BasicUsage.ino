@@ -5,9 +5,9 @@
 TimeSync timesync;
 
 // replace the * with the values in your setup
-// const char *ssid = "****";
-// const char *password =  "****";
-// const char *ntpServerIpStr = "*.*.*.*";
+const char *ssid = "****";
+const char *password =  "****";
+const char *ntpServerIpStr = "*.*.*.*";
 
 void print_uint64_t(uint64_t num) {
 

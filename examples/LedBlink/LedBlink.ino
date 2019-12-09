@@ -15,9 +15,9 @@ that they have a synchronized time over the network.
 TimeSync timesync;
 
 // replace the * with the values in your setup
-// const char *ssid = "****";
-// const char *password =  "****";
-// const char *ntpServerIpStr = "*.*.*.*";
+const char *ssid = "****";
+const char *password =  "****";
+const char *ntpServerIpStr = "*.*.*.*";
 
 void setup()
 {
