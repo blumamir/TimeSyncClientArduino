@@ -45,6 +45,7 @@ public:
 public:
   bool isTimeValid() { return m_isTimeValid; }
   int64_t getEspStartTimeMs() { return m_espStartTimeMs; }
+  int64_t getCurrentEpochTimeMs(unsigned long currentEspMillis) { return (m_espStartTimeMs + (int64_t)currentEspMillis); }
 
 public:
   void updateConfiguration(
