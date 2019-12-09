@@ -1,12 +1,15 @@
 {
-    "name": "TimeSync",
-    "keywords": "ntp",
-    "description": "",
+    "name": "TimeSyncClientArduino",
+    "keywords": "TSP, time sync protocol, distributed time",
+    "description": "arduino library for accurate clock synchronization over wifi between multiple esp32 controllers",
     "repository": {
         "type": "git",
-        "url": "https://github.com/BlumAmir/TimeSync"
+        "url": "https://github.com/BlumAmir/TimeSyncClientArduino.git"
     },
     "version": "1.0",
+    "authors": {
+        "name": "Amir Blum"
+    },
     "frameworks": "arduino",
     "platforms": [
         "espressif"
