@@ -17,4 +17,4 @@ install:
     - platformio update
 
 script:
-    - platformio ci --board=esp32doit-devkit-v1
+    - platformio ci --lib="." --board=esp32doit-devkit-v1
