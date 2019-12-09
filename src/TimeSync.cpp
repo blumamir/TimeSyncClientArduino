@@ -141,16 +141,30 @@ void TimeSync::updateLimits(unsigned long currMillis) {
   //Serial.println("******************"); Serial.println();
 }
 
-void onTspResponseCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
+void handleSingleResponsePbuf(TimeSync *senderTimeSync, pbuf *pb)
 {
   if(pb->len < 24)
   {
     #ifdef TIME_SYNC_DEBUG
     Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(pb->len);
     #endif // TIME_SYNC_DEBUG
+
+    return;
   }
 
   uint8_t *packetResponseBuffer = (uint8_t *)pb->payload;
+
+  // validate that this packet is ineeded from the TSP protocol
+  if( *(packetResponseBuffer + 0) != 'T' ||
+      *(packetResponseBuffer + 1) != 'S' ||
+      *(packetResponseBuffer + 2) != 'P')
+  {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("TimeSync: ignoring tsp response. TSP header not valid. probably wrong packet arrived to socket");
+    #endif // TIME_SYNC_DEBUG
+
+    return;
+  }
 
   // prepare message for queue. 
   // we copy everything we need from the udp buffer so we don't need it anymore
@@ -159,15 +173,27 @@ void onTspResponseCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *a
   udpTimeResponseData.responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
   udpTimeResponseData.epochTimeFromServer = *((uint64_t *)(packetResponseBuffer + 16));
 
-  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
-
   if (xQueueSend(senderTimeSync->m_responsesQueue, &udpTimeResponseData, 0) != pdTRUE) {
     #ifdef TIME_SYNC_DEBUG
     Serial.println("TimeSync: ignoring tsp response. cannot send it on queue ");
     #endif // TIME_SYNC_DEBUG
   }
+}
 
-  pbuf_free(pb);
+void onTspResponseCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
+{
+  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
+
+  while(pb != NULL) {
+
+      pbuf * currPb = pb;
+      pb = pb->next;
+      currPb->next = NULL;
+
+      handleSingleResponsePbuf(senderTimeSync, currPb);
+
+      pbuf_free(currPb);
+  }
 }
 
 void TimeSync::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
@@ -215,7 +241,7 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   m_address = ntpServerAddress;
   m_tspServerPort = tspServerPort;
 
-  m_responsesQueue = xQueueCreate(5, sizeof(UdpTimeResponseData));
+  m_responsesQueue = xQueueCreate(4, sizeof(UdpTimeResponseData));
   if(!m_responsesQueue)
   {
     #ifdef TIME_SYNC_DEBUG

@@ -8,6 +8,9 @@ TimeSync timesync;
 // const char *ssid = "****";
 // const char *password =  "****";
 // const char *ntpServerIpStr = "*.*.*.*";
+const char *ssid = "Rav-Hen";
+const char *password =  "nimnimNIM";
+const char *ntpServerIpStr = "10.0.0.106";
 
 void print_uint64_t(uint64_t num) {
 
