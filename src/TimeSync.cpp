@@ -1,4 +1,5 @@
 #include "TimeSync.hpp"
+
 #include "Arduino.h" // for millis() function
 
 #ifdef TIME_SYNC_DEBUG
@@ -20,7 +21,8 @@ void print_uint64(uint64_t num) {
 #endif // TIME_SYNC_DEBUG
 
 TimeSync::TimeSync() {
-  // set all bytes in the buffer to 0
+
+  // prepare the time request buffer for useage
   memset(m_requestTimeMsgBuffer, 0, REQUEST_TIME_PACKET_SIZE);
   // Initialize values needed to form NTP request
   m_requestTimeMsgBuffer[0] = 'T';
@@ -38,11 +40,40 @@ void TimeSync::sendTspPacket() {
   m_lastTspReqCookie = m_lastTspSendTime;
   *((uint64_t *)(m_requestTimeMsgBuffer + 8)) = m_lastTspReqCookie;
 
-  m_udp.writeTo(m_requestTimeMsgBuffer, REQUEST_TIME_PACKET_SIZE, m_address, m_tspServerPort);
+  // send the buffer to lwip socket
+  pbuf* pb = pbuf_alloc(PBUF_TRANSPORT, REQUEST_TIME_PACKET_SIZE, PBUF_RAM);
+  if(pb == NULL) {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("Time Sync: failed to allocate memory for packet send");
+    #endif // TIME_SYNC_DEBUG
+    return;
+  }
 
-  #ifdef TIME_SYNC_DEBUG
-  Serial.println("sending time sync request packet to server");
-  #endif // TIME_SYNC_DEBUG
+  uint8_t* pbufPayloadPtr = reinterpret_cast<uint8_t*>(pb->payload);
+  memcpy(pbufPayloadPtr, m_requestTimeMsgBuffer, REQUEST_TIME_PACKET_SIZE);
+
+  // we need to call lwip api from the right core. this code handles this task.
+  // TODO: can it be done better? what is `tcpip_api_call` actually doing?
+  UdpSendData udpSendData;
+  udpSendData.pcb = m_lwipPcb;
+  udpSendData.pb = pb;
+  tcpip_api_call(lwipSend, (struct tcpip_api_call_data*)&udpSendData);
+
+  if(udpSendData.err != ERR_OK)
+  {
+    // TODO: how to handle error in send?
+
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("Time Sync: error in sending time request to server");
+    #endif // TIME_SYNC_DEBUG
+  }
+  else {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("Time Sync: sending time sync request packet to server");
+    #endif // TIME_SYNC_DEBUG
+  }
+
+  pbuf_free(pb);
 }
 
 void TimeSync::updateLimits(unsigned long currMillis) {
@@ -110,27 +141,42 @@ void TimeSync::updateLimits(unsigned long currMillis) {
   //Serial.println("******************"); Serial.println();
 }
 
-void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
+void onTspResponseCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
 {
-  // stamp the recv time, this is important to be done ASAP
-  uint32_t espTimeReplyStamp = millis();
-
-  if(packet.length() != 24)
+  if(pb->len < 24)
   {
     #ifdef TIME_SYNC_DEBUG
-    Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(packet.length());
+    Serial.print("TimeSync: ignoring tsp response. packet size should be 24, found: "); Serial.println(pb->len);
     #endif // TIME_SYNC_DEBUG
-
-    return;
   }
 
-  uint8_t *packetResponseBuffer = packet.data();
-  uint64_t responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
-  if(responseCookie != m_lastTspReqCookie) {
+  uint8_t *packetResponseBuffer = (uint8_t *)pb->payload;
+
+  // prepare message for queue. 
+  // we copy everything we need from the udp buffer so we don't need it anymore
+  UdpTimeResponseData udpTimeResponseData;
+  udpTimeResponseData.espPacketRecvTime = millis(); 
+  udpTimeResponseData.responseCookie = *((uint64_t *)(packetResponseBuffer + 8));
+  udpTimeResponseData.epochTimeFromServer = *((uint64_t *)(packetResponseBuffer + 16));
+
+  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
+
+  if (xQueueSend(senderTimeSync->m_responsesQueue, &udpTimeResponseData, 0) != pdTRUE) {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("TimeSync: ignoring tsp response. cannot send it on queue ");
+    #endif // TIME_SYNC_DEBUG
+  }
+
+  pbuf_free(pb);
+}
+
+void TimeSync::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
+{
+  if(udpTimeResponseData.responseCookie != m_lastTspReqCookie) {
     // this is a reponse for some old request, or not an tsp packet
 
     #ifdef TIME_SYNC_DEBUG
-    Serial.print("TimeSync: ignoring tsp response. expected cookie: "); print_uint64(m_lastTspReqCookie); Serial.print(" and got "); print_uint64(responseCookie); Serial.println("");
+    Serial.print("TimeSync: ignoring tsp response. expected cookie: "); print_uint64(m_lastTspReqCookie); Serial.print(" and got "); print_uint64(udpTimeResponseData.responseCookie); Serial.println("");
     #endif // TIME_SYNC_DEBUG
 
     return;
@@ -138,7 +184,7 @@ void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
   m_lastTspReqCookie = 0; // mark 0 means we consumed the response
 
   // check if time update is needed
-  unsigned int roundTrip = espTimeReplyStamp - m_lastTspSendTime;
+  unsigned int roundTrip = udpTimeResponseData.espPacketRecvTime - m_lastTspSendTime;
   if(roundTrip >= m_limitRoundtripForUpdate) {
     // this packet took too much time for round trip. we don't use it
 
@@ -153,55 +199,13 @@ void TimeSync::onNtpPacketCallback(AsyncUDPPacket &packet)
   Serial.print("TimeSync: round trip is "); Serial.print(roundTrip); Serial.print(" < "); Serial.print(m_limitRoundtripForUpdate); Serial.println(" ms, updating internal time");
   #endif // TIME_SYNC_DEBUG
 
-  uint64_t serverTimeMsSinceEpoch = *((uint64_t *)(packetResponseBuffer + 16));
-  unsigned int espTimeWhenServerStampped = espTimeReplyStamp - (roundTrip / 2); // approximation, since we cannot really know this value
+  // approximate the time esp showed (miilis()) when the server stampped the ephoc time.
+  unsigned int espTimeWhenServerStampped = udpTimeResponseData.espPacketRecvTime - (roundTrip / 2); 
 
-  // // seconds part
-  // uint32_t highWord = word(packetBuffer[40], packetBuffer[41]);
-  // uint32_t lowWord = word(packetBuffer[42], packetBuffer[43]);
-  // uint32_t secFromNtpEpoch = highWord << 16 | lowWord;
-  // // ms part
-  // uint32_t otherHighWord = word(packetBuffer[44], packetBuffer[45]);
-  // uint32_t otherLowWord = word(packetBuffer[46], packetBuffer[47]);
-  // uint32_t fractional = otherHighWord << 16 | otherLowWord;
-  // float readMsF = ((float)fractional)*2.3283064365387E-07; // fractional*(1000/2^32) to get milliseconds.
-  // if(readMsF < 0.0) {
-  //   // should not happen, but we will check just in case
-  //   readMsF = 0.0;
-  // }
-  // // this is just the fractional part. should be in range [0, 1000)
-  // uint32_t msPart = (uint32_t)(readMsF);
-  // if(msPart >= 1000) {
-  //   // this can happen in very rare scenarions, because float calculations are
-  //   // not precise and can inject errors
-  //   msPart = 999;
-  // }
-
-  // // Unix time starts on Jan 1 1970. ntp epoch is Jan 1 1900,
-  // // In seconds, that's 2208988800:
-  // static const unsigned long seventyYears = 2208988800UL;
-  // uint32_t secFromEpoch = secFromNtpEpoch - seventyYears;
-
-  // // esp epoch is the time when esp started. it is the time for which millis()
-  // // function returned 0.
-  // // now we will calculate what was the time (seconds + ms) on esp epoch.
-  // // that is done by reducing 'recvTime' from the time sent from ntp server.
-
-  // unsigned long recvTimeSec = recvTime / 1000;
-  // unsigned long recvTimeMillis = recvTime % 1000;
-  // unsigned long startTimeSec = secFromEpoch - recvTimeSec;
-  // unsigned long startTimeMillis;
-  // if (((int32_t)msPart - (int32_t)recvTimeMillis) < 0) {
-  //   startTimeMillis = 1000 - (recvTimeMillis - msPart);
-  //   startTimeSec--;
-  // }
-  // else {
-  //   startTimeMillis = msPart - recvTimeMillis;
-  // }
-  m_lastClockUpdateTime = espTimeReplyStamp;
+  m_lastClockUpdateTime = udpTimeResponseData.espPacketRecvTime;
   m_lastRoundTripTimeMs = roundTrip;
   m_isTimeValid = true;
-  m_espStartTimeMs = serverTimeMsSinceEpoch - espTimeWhenServerStampped;
+  m_espStartTimeMs = udpTimeResponseData.epochTimeFromServer - espTimeWhenServerStampped;
 
   updateLimits(m_lastClockUpdateTime);
 }
@@ -211,16 +215,53 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   m_address = ntpServerAddress;
   m_tspServerPort = tspServerPort;
 
-  if(m_udp.connect(m_address, m_tspServerPort)) {
-    Serial.println("UDP connected");
-    AuPacketHandlerFunction callback = std::bind(&TimeSync::onNtpPacketCallback, this, std::placeholders::_1);
-    m_udp.onPacket(callback);
+  m_responsesQueue = xQueueCreate(5, sizeof(UdpTimeResponseData));
+  if(!m_responsesQueue)
+  {
+    #ifdef TIME_SYNC_DEBUG
+    Serial.println("Time Sync: queue create failed");
+    #endif // TIME_SYNC_DEBUG
+    return;
+  }
+
+  m_lwipPcb = udp_new();
+
+  // tell lwip to call this function when a udp packet arrive on this socket (pcb)
+  udp_recv(m_lwipPcb, &onTspResponseCallback, (void *)this);
+
+  ip_addr_t lwipIpv4Addr;
+  lwipIpv4Addr.type = IPADDR_TYPE_V4;
+  lwipIpv4Addr.u_addr.ip4.addr = ntpServerAddress;
+
+  UdpConnectData udpConnectData;
+  udpConnectData.pcb = m_lwipPcb;
+  udpConnectData.addr = &lwipIpv4Addr;
+  udpConnectData.port = tspServerPort;
+  tcpip_api_call(lwipConnect, (struct tcpip_api_call_data*)&udpConnectData);
+
+  if(udpConnectData.err != ERR_OK)
+  {
+      // TODO - handle error
+      return;
   }
 
   updateLimits(0);
 }
 
+void TimeSync::consumeResponsesFromQueue()
+{
+  UdpTimeResponseData udpTimeResponseData;
+  while(xQueueReceive(m_responsesQueue, &udpTimeResponseData, 0) == pdTRUE)
+  {
+    handleTspResponseData(udpTimeResponseData);
+  }
+}
+
+
 void TimeSync::loop() {
+
+  consumeResponsesFromQueue();
+
   unsigned long currMillis = millis();
   if( (currMillis - m_lastTspSendTime) > m_timeBetweenSendsMs) {
     sendTspPacket();
@@ -241,3 +282,14 @@ void TimeSync::UpdateConfiguration(
   m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;  
 }
 
+err_t TimeSync::lwipSend(struct tcpip_api_call_data *data){
+    UdpSendData *msg = (UdpSendData *)data;
+    msg->err = udp_send(msg->pcb, msg->pb);
+    return msg->err;
+}
+
+err_t TimeSync::lwipConnect(struct tcpip_api_call_data *data){
+    UdpConnectData *msg = (UdpConnectData *)data;
+    msg->err = udp_connect(msg->pcb, msg->addr, msg->port);
+    return msg->err;
+}

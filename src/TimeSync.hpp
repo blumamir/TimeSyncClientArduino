@@ -1,7 +1,37 @@
 #pragma once
 
-#include <Stream.h> // due to https://github.com/espressif/arduino-esp32/issues/2872
-#include "AsyncUDP.h"
+#include <IPAddress.h>
+
+#include "lwip/udp.h"
+#include "lwip/priv/tcpip_priv.h"
+
+// The following structs are used to move messages accross cores, 
+// so operations are handled on the right context
+
+typedef struct
+{
+  uint32_t espPacketRecvTime; 
+  uint64_t responseCookie;
+  uint64_t epochTimeFromServer;
+} UdpTimeResponseData;
+
+typedef struct
+{
+    struct tcpip_api_call_data call;
+    udp_pcb * pcb;
+    struct pbuf *pb;
+    err_t err;
+} UdpSendData;
+
+typedef struct
+{
+    struct tcpip_api_call_data call;
+    udp_pcb * pcb;
+    const ip_addr_t *addr;
+    uint16_t port;
+    err_t err;
+} UdpConnectData;
+
 
 class TimeSync {
 
@@ -28,13 +58,20 @@ private:
   void sendTspPacket();
   void updateLimits(unsigned long currMillis);
 
+// lwip api static functions
+private:
+  static err_t lwipSend(struct tcpip_api_call_data *data);
+  static err_t lwipConnect(struct tcpip_api_call_data *data);
+
+
 // network config values
 private:
   IPAddress m_address;
   uint16_t m_tspServerPort;
 
 private:
-  void onNtpPacketCallback(AsyncUDPPacket &packet);
+  void consumeResponsesFromQueue();
+  void handleTspResponseData(const UdpTimeResponseData &packet);
 
 public:
 
@@ -91,6 +128,12 @@ private:
   static const int REQUEST_TIME_PACKET_SIZE = 16;
   uint8_t m_requestTimeMsgBuffer[REQUEST_TIME_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
-  AsyncUDP m_udp;
+  // internal header for the socket, used with lwip api
+  udp_pcb *m_lwipPcb = NULL;
+
+public:
+  // this queue is used to move responses from the lwip context, to the TimeSync context
+  // it is public, but used only internally.
+  xQueueHandle m_responsesQueue;
 };
 

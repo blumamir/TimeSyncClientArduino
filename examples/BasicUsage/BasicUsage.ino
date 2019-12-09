@@ -40,7 +40,7 @@ void setup()
 
     IPAddress ntpServerIp;
     ntpServerIp.fromString(ntpServerIpStr);
-    timesync.UpdateConfiguration(1, 1000 * 60 * 10, 1000, 1000 * 60 * 2);
+    timesync.UpdateConfiguration(15, 1000 * 60 * 10, 100, 1000 * 60 * 2);
     timesync.setup(ntpServerIp, 12321);
 }
 
