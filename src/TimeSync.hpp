@@ -5,6 +5,9 @@
 #include "lwip/udp.h"
 #include "lwip/priv/tcpip_priv.h"
 
+namespace TimeSync
+{
+
 // The following structs are used to move messages accross cores, 
 // so operations are handled on the right context
 
@@ -33,11 +36,11 @@ typedef struct
 } UdpConnectData;
 
 
-class TimeSync {
+class TimeSyncClient {
 
 public:
 
-  TimeSync();
+  TimeSyncClient();
 
   void setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort);
   void loop();
@@ -139,3 +142,4 @@ private:
   xQueueHandle m_responsesQueue;
 };
 
+}

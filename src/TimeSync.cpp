@@ -2,6 +2,9 @@
 
 #include "Arduino.h" // for millis() function
 
+namespace TimeSync
+{
+
 #ifdef TIME_SYNC_DEBUG
 void print_uint64(uint64_t num) {
 
@@ -20,7 +23,7 @@ void print_uint64(uint64_t num) {
 }
 #endif // TIME_SYNC_DEBUG
 
-TimeSync::TimeSync() {
+TimeSyncClient::TimeSyncClient() {
 
   // prepare the time request buffer for useage
   memset(m_requestTimeMsgBuffer, 0, REQUEST_TIME_PACKET_SIZE);
@@ -31,7 +34,7 @@ TimeSync::TimeSync() {
   m_requestTimeMsgBuffer[3] = 1; // Protocol Version
 }
 
-void TimeSync::sendTspPacket() {
+void TimeSyncClient::sendTspPacket() {
 
   // stamp the send time
   m_lastTspSendTime = millis();
@@ -76,7 +79,7 @@ void TimeSync::sendTspPacket() {
   pbuf_free(pb);
 }
 
-void TimeSync::updateLimits(unsigned long currMillis) {
+void TimeSyncClient::updateLimits(unsigned long currMillis) {
 
   // don't update the limits if we didn't have any updates.
   // we cannot read valid value from m_lastClockUpdateTime in that case
@@ -141,7 +144,7 @@ void TimeSync::updateLimits(unsigned long currMillis) {
   //Serial.println("******************"); Serial.println();
 }
 
-void TimeSync::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
+void TimeSyncClient::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
 {
   if(udpTimeResponseData.responseCookie != m_lastTspReqCookie) {
     // this is a reponse for some old request, or not an tsp packet
@@ -181,7 +184,7 @@ void TimeSync::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseD
   updateLimits(m_lastClockUpdateTime);
 }
 
-void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) {
+void TimeSyncClient::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) {
 
   m_address = ntpServerAddress;
   m_tspServerPort = tspServerPort;
@@ -198,7 +201,7 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   m_lwipPcb = udp_new();
 
   // tell lwip to call this function when a udp packet arrive on this socket (pcb)
-  udp_recv(m_lwipPcb, &TimeSync::lwipUdpRecvCallback, (void *)this);
+  udp_recv(m_lwipPcb, &TimeSyncClient::lwipUdpRecvCallback, (void *)this);
 
   ip_addr_t lwipIpv4Addr;
   lwipIpv4Addr.type = IPADDR_TYPE_V4;
@@ -219,7 +222,7 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   updateLimits(0);
 }
 
-void TimeSync::consumeResponsesFromQueue()
+void TimeSyncClient::consumeResponsesFromQueue()
 {
   UdpTimeResponseData udpTimeResponseData;
   while(xQueueReceive(m_responsesQueue, &udpTimeResponseData, 0) == pdTRUE)
@@ -229,7 +232,7 @@ void TimeSync::consumeResponsesFromQueue()
 }
 
 
-void TimeSync::loop() {
+void TimeSyncClient::loop() {
 
   consumeResponsesFromQueue();
 
@@ -240,7 +243,7 @@ void TimeSync::loop() {
   }
 }
 
-void TimeSync::updateConfiguration(
+void TimeSyncClient::updateConfiguration(
     unsigned int maxAllowedRoundTripMs,
     unsigned int desirableUpdateFreqMs,
     unsigned int minServerSendTimeMs,
@@ -253,7 +256,7 @@ void TimeSync::updateConfiguration(
   m_maxServerSendTimeMs = maxServerSendTimeMs > 0 ? maxServerSendTimeMs : defaultMaxAllowedRoundTripMs;  
 }
 
-void TimeSync::handlePbufOnLwipContext(pbuf *pb)
+void TimeSyncClient::handlePbufOnLwipContext(pbuf *pb)
 {
   if(pb->len < 24)
   {
@@ -293,21 +296,21 @@ void TimeSync::handlePbufOnLwipContext(pbuf *pb)
   }
 }
 
-err_t TimeSync::lwipSend(struct tcpip_api_call_data *data){
+err_t TimeSyncClient::lwipSend(struct tcpip_api_call_data *data){
     UdpSendData *msg = (UdpSendData *)data;
     msg->err = udp_send(msg->pcb, msg->pb);
     return msg->err;
 }
 
-err_t TimeSync::lwipConnect(struct tcpip_api_call_data *data){
+err_t TimeSyncClient::lwipConnect(struct tcpip_api_call_data *data){
     UdpConnectData *msg = (UdpConnectData *)data;
     msg->err = udp_connect(msg->pcb, msg->addr, msg->port);
     return msg->err;
 }
 
-void TimeSync::lwipUdpRecvCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
+void TimeSyncClient::lwipUdpRecvCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_addr_t *addr, uint16_t port)
 {
-  TimeSync *senderTimeSync = reinterpret_cast<TimeSync*>(arg);
+  TimeSyncClient *senderTimeSync = reinterpret_cast<TimeSyncClient*>(arg);
 
   while(pb != NULL) {
 
@@ -319,4 +322,6 @@ void TimeSync::lwipUdpRecvCallback(void *arg, udp_pcb *pcb, pbuf *pb, const ip_a
 
       pbuf_free(currPb);
   }
+}
+
 }

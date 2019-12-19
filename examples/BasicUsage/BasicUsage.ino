@@ -2,7 +2,7 @@
 
 #include <TimeSync.hpp>
 
-TimeSync timesync;
+TimeSync::TimeSyncClient timesync;
 
 // replace the * with the values in your setup
 const char *ssid = "****";

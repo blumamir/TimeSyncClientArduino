@@ -12,7 +12,7 @@ that they have a synchronized time over the network.
 
 #define LED_GPIO 2
 
-TimeSync timesync;
+TimeSync::TimeSyncClient timesync;
 
 // replace the * with the values in your setup
 const char *ssid = "****";
