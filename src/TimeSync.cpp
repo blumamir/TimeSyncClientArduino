@@ -144,7 +144,7 @@ void TimeSyncClient::updateLimits(unsigned long currMillis) {
   //Serial.println("******************"); Serial.println();
 }
 
-void TimeSyncClient::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData)
+void TimeSyncClient::handleTspResponseData(const UdpTimeResponseData &udpTimeResponseData, bool *isClockChanged)
 {
   if(udpTimeResponseData.responseCookie != m_lastTspReqCookie) {
     // this is a reponse for some old request, or not an tsp packet
@@ -175,11 +175,24 @@ void TimeSyncClient::handleTspResponseData(const UdpTimeResponseData &udpTimeRes
 
   // approximate the time esp showed (miilis()) when the server stampped the ephoc time.
   unsigned int espTimeWhenServerStampped = udpTimeResponseData.espPacketRecvTime - (roundTrip / 2); 
+  int64_t newEspStartTimeMs = udpTimeResponseData.epochTimeFromServer - espTimeWhenServerStampped;
+  
+  bool firstValidTime = !m_isTimeValid;
+  bool clockTimeChanged = (m_espStartTimeMs != newEspStartTimeMs);
 
   m_lastClockUpdateTime = udpTimeResponseData.espPacketRecvTime;
   m_lastRoundTripTimeMs = roundTrip;
   m_isTimeValid = true;
-  m_espStartTimeMs = udpTimeResponseData.epochTimeFromServer - espTimeWhenServerStampped;
+  m_espStartTimeMs = newEspStartTimeMs;
+
+  if(isClockChanged != nullptr)
+  {
+    // notify only if the clocked has really changed
+    if(firstValidTime || clockTimeChanged)
+    {
+      *isClockChanged = true;
+    }
+  }
 
   updateLimits(m_lastClockUpdateTime);
 }
@@ -222,19 +235,24 @@ void TimeSyncClient::setup(const IPAddress &ntpServerAddress, uint16_t tspServer
   updateLimits(0);
 }
 
-void TimeSyncClient::consumeResponsesFromQueue()
+void TimeSyncClient::consumeResponsesFromQueue(bool *isClockChanged)
 {
+  if(isClockChanged != nullptr)
+  {
+    *isClockChanged = false;    
+  }
+
   UdpTimeResponseData udpTimeResponseData;
   while(xQueueReceive(m_responsesQueue, &udpTimeResponseData, 0) == pdTRUE)
   {
-    handleTspResponseData(udpTimeResponseData);
+    handleTspResponseData(udpTimeResponseData, isClockChanged);
   }
 }
 
 
-void TimeSyncClient::loop() {
+void TimeSyncClient::loop(bool *isClockChanged) {
 
-  consumeResponsesFromQueue();
+  consumeResponsesFromQueue(isClockChanged);
 
   unsigned long currMillis = millis();
   if( (currMillis - m_lastTspSendTime) > m_timeBetweenSendsMs) {

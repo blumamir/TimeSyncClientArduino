@@ -43,7 +43,17 @@ public:
   TimeSyncClient();
 
   void setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort);
-  void loop();
+
+  /*
+  loop should be called once in a while for correct operation.
+  It is where time responses are consumed, and new time queries are sent.
+
+  If the user of the library needs to act upon time changes in some way,
+  the isClockChanged function parameter can be set. When function returns,
+  it will be set to true if a fresh clock is availible, and false it clock 
+  stayed the same.
+  */
+  void loop(bool *isClockChanged = nullptr);
 
 public:
   bool isTimeValid() { return m_isTimeValid; }
@@ -79,8 +89,8 @@ private:
   uint16_t m_tspServerPort;
 
 private:
-  void consumeResponsesFromQueue();
-  void handleTspResponseData(const UdpTimeResponseData &packet);
+  void consumeResponsesFromQueue(bool *isClockChanged);
+  void handleTspResponseData(const UdpTimeResponseData &packet, bool *isClockChanged);
 
 public:
 
