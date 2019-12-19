@@ -48,9 +48,13 @@ unsigned int lastPrintTime = 0;
 
 void loop()
 {
-  bool isTimeChanged;  
-  timesync.loop(&isTimeChanged);
-  if(isTimeChanged)
+  bool isTimeChanged, isFirstClockUpdate;  
+  timesync.loop(&isTimeChanged, &isFirstClockUpdate);
+  if(isFirstClockUpdate)
+  {
+    Serial.println("TIME IS NOW VALID. the esp clock was not valid and now it is");
+  }
+  else if(isTimeChanged)
   {
     Serial.println("TIME CHANGED. new synced clock is availible to the esp");
   }

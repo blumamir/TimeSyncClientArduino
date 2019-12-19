@@ -52,8 +52,10 @@ public:
   the isClockChanged function parameter can be set. When function returns,
   it will be set to true if a fresh clock is availible, and false it clock 
   stayed the same.
+  The isFirstClockUpdate parameter is used to get notified when clock was not valid,
+  and due to the current loop invocation - it is now valid for the first time.
   */
-  void loop(bool *isClockChanged = nullptr);
+  void loop(bool *isClockChanged = nullptr, bool *isFirstClockUpdate = nullptr);
 
 public:
   bool isTimeValid() { return m_isTimeValid; }
@@ -89,8 +91,8 @@ private:
   uint16_t m_tspServerPort;
 
 private:
-  void consumeResponsesFromQueue(bool *isClockChanged);
-  void handleTspResponseData(const UdpTimeResponseData &packet, bool *isClockChanged);
+  void consumeResponsesFromQueue(bool *isClockChanged, bool *isFirstClockUpdate);
+  void handleTspResponseData(const UdpTimeResponseData &packet, bool *isClockChanged, bool *isFirstClockUpdate);
 
 public:
 
