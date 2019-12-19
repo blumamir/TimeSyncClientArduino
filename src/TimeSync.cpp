@@ -44,7 +44,7 @@ void TimeSync::sendTspPacket() {
   pbuf* pb = pbuf_alloc(PBUF_TRANSPORT, REQUEST_TIME_PACKET_SIZE, PBUF_RAM);
   if(pb == NULL) {
     #ifdef TIME_SYNC_DEBUG
-    Serial.println("Time Sync: failed to allocate memory for packet send");
+    Serial.println("TimeSync: failed to allocate memory for packet send");
     #endif // TIME_SYNC_DEBUG
     return;
   }
@@ -64,12 +64,12 @@ void TimeSync::sendTspPacket() {
     // TODO: how to handle error in send?
 
     #ifdef TIME_SYNC_DEBUG
-    Serial.println("Time Sync: error in sending time request to server");
+    Serial.println("TimeSync: error in sending time request to server");
     #endif // TIME_SYNC_DEBUG
   }
   else {
     #ifdef TIME_SYNC_DEBUG
-    Serial.println("Time Sync: sending time sync request packet to server");
+    Serial.println("TimeSync: sending time sync request packet to server");
     #endif // TIME_SYNC_DEBUG
   }
 
@@ -190,7 +190,7 @@ void TimeSync::setup(const IPAddress &ntpServerAddress, uint16_t tspServerPort) 
   if(!m_responsesQueue)
   {
     #ifdef TIME_SYNC_DEBUG
-    Serial.println("Time Sync: queue create failed");
+    Serial.println("TimeSync: queue create failed");
     #endif // TIME_SYNC_DEBUG
     return;
   }
